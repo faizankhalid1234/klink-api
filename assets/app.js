@@ -1,6 +1,7 @@
 const API_URL = '/api/generate';
-const MAX_TOTAL_MB = 3.8;
-const MAX_AUDIO_SECONDS = 60;
+const MAX_TOTAL_MB = 4;
+const MAX_AUDIO_SECONDS = 30;
+const KEEP_ORIGINAL_AUDIO_MB = 2;
 
 const form = document.getElementById('uploadForm');
 const submitBtn = document.getElementById('submitBtn');
@@ -22,9 +23,8 @@ function setStatus(text) {
   submitBtn.textContent = text;
 }
 
-async function compressImage(file, maxWidth = 1024, quality = 0.8) {
+async function compressImage(file, maxWidth = 960, quality = 0.78) {
   if (!file.type.startsWith('image/')) return file;
-  if (file.size < 400 * 1024) return file;
 
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -88,7 +88,41 @@ function audioBufferToWav(buffer) {
   return new Blob([arrayBuffer], { type: 'audio/wav' });
 }
 
-async function compressAudio(file) {
+async function getAudioDuration(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const audioCtx = new AudioContext();
+  try {
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+    return audioBuffer.duration;
+  } finally {
+    await audioCtx.close();
+  }
+}
+
+async function prepareAudio(file) {
+  const duration = await getAudioDuration(file);
+
+  if (duration > MAX_AUDIO_SECONDS) {
+    throw new Error(
+      'Audio is ' +
+        Math.round(duration) +
+        ' seconds. Maximum allowed is ' +
+        MAX_AUDIO_SECONDS +
+        ' seconds.',
+    );
+  }
+
+  const allowedTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/mp4', 'audio/x-m4a'];
+  const isAllowed = allowedTypes.includes(file.type) || /\.(mp3|wav|m4a)$/i.test(file.name);
+
+  if (!isAllowed) {
+    throw new Error('Use MP3, WAV, or M4A audio only.');
+  }
+
+  if (file.size <= KEEP_ORIGINAL_AUDIO_MB * 1024 * 1024) {
+    return file;
+  }
+
   const arrayBuffer = await file.arrayBuffer();
   const audioCtx = new AudioContext();
   let audioBuffer;
@@ -132,16 +166,12 @@ form.addEventListener('submit', async (e) => {
 
   try {
     portrait = await compressImage(portrait);
-    audio = await compressAudio(audio);
+    audio = await prepareAudio(audio);
 
     const totalBytes = portrait.size + audio.size;
     if (totalBytes > MAX_TOTAL_MB * 1024 * 1024) {
       throw new Error(
-        'Files are too large (' +
-          formatMb(totalBytes) +
-          ' MB). Use a shorter audio clip (under ' +
-          MAX_AUDIO_SECONDS +
-          ' seconds).',
+        'Files are too large (' + formatMb(totalBytes) + ' MB). Try a shorter clip or smaller image.',
       );
     }
 
@@ -156,11 +186,7 @@ form.addEventListener('submit', async (e) => {
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok || !data.success || !data.video_url) {
-      let msg = data.error || data.message || 'Avatar generation failed';
-      if (res.status === 413) {
-        msg = 'Files are too large for upload. Use a shorter audio clip (under 60 seconds).';
-      }
-      throw new Error(msg);
+      throw new Error(data.error || data.message || 'Avatar generation failed');
     }
 
     successMsg.innerHTML =

@@ -71,13 +71,16 @@ async function uploadToCatbox(buffer, filename, mime) {
 export async function hostMediaFile(buffer, filename, mime) {
   const safeName = filename || `upload.${mime.split('/')[1] || 'bin'}`;
 
-  if (getFalKey()) {
-    try {
-      return await uploadToFal(buffer, safeName, mime);
-    } catch (err) {
-      console.error('fal upload failed, using catbox fallback:', err.message);
-    }
+  // Catbox first (reliable when fal balance is low)
+  try {
+    return await uploadToCatbox(buffer, safeName, mime);
+  } catch (catboxErr) {
+    console.error('catbox upload failed:', catboxErr.message);
   }
 
-  return uploadToCatbox(buffer, safeName, mime);
+  if (getFalKey()) {
+    return uploadToFal(buffer, safeName, mime);
+  }
+
+  throw new Error('Failed to host media file online');
 }

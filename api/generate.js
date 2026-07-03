@@ -11,8 +11,8 @@ const N8N_WEBHOOK_URL =
   process.env.N8N_WEBHOOK_URL ||
   'https://muhammadumersheraz2000.socioglory.com/webhook/kling/avatar/generate';
 
-const MAX_FILE_BYTES = 4 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 4 * 1024 * 1024;
+const MAX_FILE_BYTES = 4.5 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 4.5 * 1024 * 1024;
 
 function pickFile(files, name) {
   const entry = files[name];
@@ -37,17 +37,36 @@ function cleanupTemp(...files) {
   }
 }
 
+function assertHostedUrl(url, label) {
+  const value = String(url || '').trim();
+  if (!value.startsWith('https://')) {
+    throw new Error(`${label} must be a public https URL`);
+  }
+  if (value.startsWith('data:')) {
+    throw new Error(`${label} must not be embedded base64 data`);
+  }
+  return value;
+}
+
 async function forwardToN8n(imageUrl, audioUrl, prompt, res) {
   const payload = {
-    image_url: imageUrl,
-    audio_url: audioUrl,
-    prompt,
+    image_url: assertHostedUrl(imageUrl, 'image_url'),
+    audio_url: assertHostedUrl(audioUrl, 'audio_url'),
+    prompt: String(prompt || '.').trim() || '.',
   };
+
+  const body = JSON.stringify(payload);
+  if (body.length > 12000) {
+    return res.status(500).json({
+      success: false,
+      error: 'Internal payload too large. Files must be hosted as short https URLs.',
+    });
+  }
 
   const n8nRes = await fetch(N8N_WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body,
   });
 
   const data = await n8nRes.json().catch(() => ({}));
@@ -55,7 +74,8 @@ async function forwardToN8n(imageUrl, audioUrl, prompt, res) {
   if (!n8nRes.ok) {
     let error = data.message || data.error || `n8n returned ${n8nRes.status}`;
     if (n8nRes.status === 413) {
-      error = 'n8n server upload limit is too small. Contact server admin to set nginx client_max_body_size 50M.';
+      error =
+        'n8n server blocked the request (413). Ask server admin to set nginx client_max_body_size 50M and redeploy n8n.';
     }
     return res.status(n8nRes.status).json({
       success: false,
@@ -113,7 +133,7 @@ export default async function handler(req, res) {
     const imageMime = portrait.mimetype || 'image/jpeg';
     const audioMime = audio.mimetype || 'audio/mpeg';
     const imageName = portrait.originalFilename || 'portrait.jpg';
-    const audioName = audio.originalFilename || 'audio.wav';
+    const audioName = audio.originalFilename || 'audio.mp3';
 
     cleanupTemp(portrait, audio);
 
@@ -122,23 +142,14 @@ export default async function handler(req, res) {
       return res.status(413).json({
         success: false,
         error:
-          'Files are too large after compression (' +
+          'Upload too large (' +
           (totalBytes / (1024 * 1024)).toFixed(1) +
-          ' MB). Use a shorter audio clip.',
+          ' MB). Use a shorter audio clip (max 30 seconds).',
       });
     }
 
-    const [imageUrl, audioUrl] = await Promise.all([
-      hostMediaFile(imageBuffer, imageName, imageMime),
-      hostMediaFile(audioBuffer, audioName, audioMime),
-    ]);
-
-    if (!imageUrl || !audioUrl) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to host media files before generation.',
-      });
-    }
+    const imageUrl = await hostMediaFile(imageBuffer, imageName, imageMime);
+    const audioUrl = await hostMediaFile(audioBuffer, audioName, audioMime);
 
     return forwardToN8n(imageUrl, audioUrl, prompt, res);
   } catch (err) {
