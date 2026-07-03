@@ -150,7 +150,7 @@ form.addEventListener('submit', async (e) => {
     formData.append('audio', audio);
     formData.append('prompt', prompt);
 
-    setStatus('Generating video... this may take a few minutes');
+    setStatus('Uploading and generating... this may take a few minutes');
 
     const res = await fetch(API_URL, { method: 'POST', body: formData });
     const data = await res.json().catch(() => ({}));

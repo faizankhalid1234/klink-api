@@ -1,5 +1,6 @@
 import formidable from 'formidable';
 import { readFileSync, unlinkSync } from 'fs';
+import { hostMediaFile } from './lib/media-upload.js';
 
 export const config = {
   api: { bodyParser: false },
@@ -25,27 +26,6 @@ function pickField(fields, name) {
   return Array.isArray(entry) ? entry[0] : entry;
 }
 
-function toDataUrl(buffer, mime) {
-  return `data:${mime};base64,${buffer.toString('base64')}`;
-}
-
-async function readJsonBody(req) {
-  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
-    return req.body;
-  }
-
-  const chunks = [];
-  await new Promise((resolve, reject) => {
-    req.on('data', (chunk) => chunks.push(chunk));
-    req.on('end', resolve);
-    req.on('error', reject);
-  });
-
-  const raw = Buffer.concat(chunks).toString('utf8').trim();
-  if (!raw) return {};
-  return JSON.parse(raw);
-}
-
 function cleanupTemp(...files) {
   for (const file of files) {
     if (!file?.filepath) continue;
@@ -58,22 +38,28 @@ function cleanupTemp(...files) {
 }
 
 async function forwardToN8n(imageUrl, audioUrl, prompt, res) {
+  const payload = {
+    image_url: imageUrl,
+    audio_url: audioUrl,
+    prompt,
+  };
+
   const n8nRes = await fetch(N8N_WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      image_url: imageUrl,
-      audio_url: audioUrl,
-      prompt,
-    }),
+    body: JSON.stringify(payload),
   });
 
   const data = await n8nRes.json().catch(() => ({}));
 
   if (!n8nRes.ok) {
+    let error = data.message || data.error || `n8n returned ${n8nRes.status}`;
+    if (n8nRes.status === 413) {
+      error = 'n8n server upload limit is too small. Contact server admin to set nginx client_max_body_size 50M.';
+    }
     return res.status(n8nRes.status).json({
       success: false,
-      error: data.message || data.error || `n8n returned ${n8nRes.status}`,
+      error,
       stage: data.stage,
       ...data,
     });
@@ -96,59 +82,61 @@ export default async function handler(req, res) {
   }
 
   const contentType = String(req.headers['content-type'] || '');
+  if (!contentType.includes('multipart/form-data')) {
+    return res.status(400).json({
+      success: false,
+      error: 'Send portrait and audio as multipart/form-data.',
+    });
+  }
 
   try {
-    if (contentType.includes('multipart/form-data')) {
-      const form = formidable({
-        multiples: false,
-        maxFileSize: MAX_FILE_BYTES,
-        maxTotalFileSize: MAX_TOTAL_BYTES,
-      });
+    const form = formidable({
+      multiples: false,
+      maxFileSize: MAX_FILE_BYTES,
+      maxTotalFileSize: MAX_TOTAL_BYTES,
+    });
 
-      const [fields, files] = await form.parse(req);
-      const portrait = pickFile(files, 'portrait');
-      const audio = pickFile(files, 'audio');
-      const prompt = String(pickField(fields, 'prompt') || '.').trim() || '.';
+    const [fields, files] = await form.parse(req);
+    const portrait = pickFile(files, 'portrait');
+    const audio = pickFile(files, 'audio');
+    const prompt = String(pickField(fields, 'prompt') || '.').trim() || '.';
 
-      if (!portrait || !audio) {
-        return res.status(400).json({
-          success: false,
-          error: 'Please upload both portrait (image) and audio files.',
-        });
-      }
-
-      const imageBuffer = readFileSync(portrait.filepath);
-      const audioBuffer = readFileSync(audio.filepath);
-      const imageMime = portrait.mimetype || 'image/jpeg';
-      const audioMime = audio.mimetype || 'audio/mpeg';
-
-      cleanupTemp(portrait, audio);
-
-      const totalBytes = imageBuffer.length + audioBuffer.length;
-      if (totalBytes > MAX_TOTAL_BYTES) {
-        return res.status(413).json({
-          success: false,
-          error:
-            'Files are too large after compression (' +
-            (totalBytes / (1024 * 1024)).toFixed(1) +
-            ' MB). Use a shorter audio clip.',
-        });
-      }
-
-      const imageUrl = toDataUrl(imageBuffer, imageMime);
-      const audioUrl = toDataUrl(audioBuffer, audioMime);
-      return forwardToN8n(imageUrl, audioUrl, prompt, res);
-    }
-
-    const body = await readJsonBody(req);
-    const imageUrl = body.image_url || body.imageUrl;
-    const audioUrl = body.audio_url || body.audioUrl;
-    const prompt = String(body.prompt || '.').trim() || '.';
-
-    if (!imageUrl || !audioUrl) {
+    if (!portrait || !audio) {
       return res.status(400).json({
         success: false,
-        error: 'Please upload portrait image and audio file, then try again.',
+        error: 'Please upload both portrait (image) and audio files.',
+      });
+    }
+
+    const imageBuffer = readFileSync(portrait.filepath);
+    const audioBuffer = readFileSync(audio.filepath);
+    const imageMime = portrait.mimetype || 'image/jpeg';
+    const audioMime = audio.mimetype || 'audio/mpeg';
+    const imageName = portrait.originalFilename || 'portrait.jpg';
+    const audioName = audio.originalFilename || 'audio.wav';
+
+    cleanupTemp(portrait, audio);
+
+    const totalBytes = imageBuffer.length + audioBuffer.length;
+    if (totalBytes > MAX_TOTAL_BYTES) {
+      return res.status(413).json({
+        success: false,
+        error:
+          'Files are too large after compression (' +
+          (totalBytes / (1024 * 1024)).toFixed(1) +
+          ' MB). Use a shorter audio clip.',
+      });
+    }
+
+    const [imageUrl, audioUrl] = await Promise.all([
+      hostMediaFile(imageBuffer, imageName, imageMime),
+      hostMediaFile(audioBuffer, audioName, audioMime),
+    ]);
+
+    if (!imageUrl || !audioUrl) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to host media files before generation.',
       });
     }
 
