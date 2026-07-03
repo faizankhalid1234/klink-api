@@ -2,8 +2,6 @@
   "name": "klink-api",
   "private": true,
   "dependencies": {
-    "@fal-ai/client": "^1.5.0",
-    "@fal-ai/server-proxy": "^1.2.1",
     "formidable": "^3.5.4"
   }
 }

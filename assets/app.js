@@ -1,6 +1,5 @@
-const UPLOAD_URL = '/api/upload';
 const API_URL = '/api/generate';
-const MAX_UPLOAD_MB = 3.5;
+const MAX_TOTAL_MB = 3.8;
 const MAX_AUDIO_SECONDS = 60;
 
 const form = document.getElementById('uploadForm');
@@ -23,9 +22,9 @@ function setStatus(text) {
   submitBtn.textContent = text;
 }
 
-async function compressImage(file, maxWidth = 1280, quality = 0.82) {
+async function compressImage(file, maxWidth = 1024, quality = 0.8) {
   if (!file.type.startsWith('image/')) return file;
-  if (file.size < 600 * 1024) return file;
+  if (file.size < 400 * 1024) return file;
 
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -90,8 +89,6 @@ function audioBufferToWav(buffer) {
 }
 
 async function compressAudio(file) {
-  if (file.size <= MAX_UPLOAD_MB * 1024 * 1024) return file;
-
   const arrayBuffer = await file.arrayBuffer();
   const audioCtx = new AudioContext();
   let audioBuffer;
@@ -116,28 +113,6 @@ async function compressAudio(file) {
   return new File([wavBlob], 'audio-compressed.wav', { type: 'audio/wav' });
 }
 
-async function uploadFile(file, label) {
-  setStatus('Uploading ' + label + '...');
-
-  const formData = new FormData();
-  formData.append('file', file);
-
-  const res = await fetch(UPLOAD_URL, { method: 'POST', body: formData });
-  const data = await res.json().catch(() => ({}));
-
-  if (!res.ok || !data.url) {
-    let msg = data.error || ('Failed to upload ' + label);
-    if (res.status === 413) {
-      msg = label + ' is too large. Use a smaller file or shorter audio clip.';
-    } else if (String(msg).includes('FAL')) {
-      msg = 'Add FAL_API_KEY in Vercel Environment Variables, then redeploy.';
-    }
-    throw new Error(msg);
-  }
-
-  return data.url;
-}
-
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   hideMessages();
@@ -159,35 +134,33 @@ form.addEventListener('submit', async (e) => {
     portrait = await compressImage(portrait);
     audio = await compressAudio(audio);
 
-    if (portrait.size > MAX_UPLOAD_MB * 1024 * 1024) {
-      throw new Error('Portrait image is too large after compression. Try a smaller image.');
-    }
-
-    if (audio.size > MAX_UPLOAD_MB * 1024 * 1024) {
+    const totalBytes = portrait.size + audio.size;
+    if (totalBytes > MAX_TOTAL_MB * 1024 * 1024) {
       throw new Error(
-        'Audio is still too large (' + formatMb(audio.size) + ' MB). Use a clip under ' + MAX_AUDIO_SECONDS + ' seconds.',
+        'Files are too large (' +
+          formatMb(totalBytes) +
+          ' MB). Use a shorter audio clip (under ' +
+          MAX_AUDIO_SECONDS +
+          ' seconds).',
       );
     }
 
-    const imageUrl = await uploadFile(portrait, 'portrait');
-    const audioUrl = await uploadFile(audio, 'audio');
-
-    if (!imageUrl || !audioUrl) {
-      throw new Error('Upload did not return file URLs. Check FAL_API_KEY on Vercel.');
-    }
+    const formData = new FormData();
+    formData.append('portrait', portrait);
+    formData.append('audio', audio);
+    formData.append('prompt', prompt);
 
     setStatus('Generating video... this may take a few minutes');
 
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_url: imageUrl, audio_url: audioUrl, prompt }),
-    });
-
+    const res = await fetch(API_URL, { method: 'POST', body: formData });
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok || !data.success || !data.video_url) {
-      throw new Error(data.error || data.message || 'Avatar generation failed');
+      let msg = data.error || data.message || 'Avatar generation failed';
+      if (res.status === 413) {
+        msg = 'Files are too large for upload. Use a shorter audio clip (under 60 seconds).';
+      }
+      throw new Error(msg);
     }
 
     successMsg.innerHTML =
