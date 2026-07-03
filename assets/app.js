@@ -1,7 +1,4 @@
-import { fal } from 'https://esm.sh/@fal-ai/client@1.5.0';
-
-fal.config({ proxyUrl: '/api/fal/proxy' });
-
+const UPLOAD_URL = '/api/upload';
 const API_URL = '/api/generate';
 const MAX_UPLOAD_MB = 3.5;
 const MAX_AUDIO_SECONDS = 60;
@@ -60,9 +57,7 @@ async function compressImage(file, maxWidth = 1280, quality = 0.82) {
 function audioBufferToWav(buffer) {
   const channel = buffer.getChannelData(0);
   const sampleRate = buffer.sampleRate;
-  const bytesPerSample = 2;
-  const blockAlign = bytesPerSample;
-  const dataSize = channel.length * bytesPerSample;
+  const dataSize = channel.length * 2;
   const arrayBuffer = new ArrayBuffer(44 + dataSize);
   const view = new DataView(arrayBuffer);
 
@@ -78,8 +73,8 @@ function audioBufferToWav(buffer) {
   view.setUint16(20, 1, true);
   view.setUint16(22, 1, true);
   view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * blockAlign, true);
-  view.setUint16(32, blockAlign, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
   writeString(36, 'data');
   view.setUint32(40, dataSize, true);
@@ -107,22 +102,12 @@ async function compressAudio(file) {
     await audioCtx.close();
   }
 
-  const maxSamples = Math.min(
-    audioBuffer.length,
-    Math.ceil(Math.min(audioBuffer.duration, MAX_AUDIO_SECONDS) * audioBuffer.sampleRate),
-  );
-
-  const offline = new OfflineAudioContext(1, maxSamples, 22050);
-  const mono = offline.createBuffer(1, maxSamples, audioBuffer.sampleRate);
-  const out = mono.getChannelData(0);
-
-  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch += 1) {
-    const input = audioBuffer.getChannelData(ch);
-    for (let i = 0; i < maxSamples; i += 1) out[i] += input[i] / audioBuffer.numberOfChannels;
-  }
-
+  const targetRate = 22050;
+  const maxDuration = Math.min(audioBuffer.duration, MAX_AUDIO_SECONDS);
+  const length = Math.ceil(maxDuration * targetRate);
+  const offline = new OfflineAudioContext(1, length, targetRate);
   const source = offline.createBufferSource();
-  source.buffer = mono;
+  source.buffer = audioBuffer;
   source.connect(offline.destination);
   source.start(0);
   const rendered = await offline.startRendering();
@@ -131,9 +116,26 @@ async function compressAudio(file) {
   return new File([wavBlob], 'audio-compressed.wav', { type: 'audio/wav' });
 }
 
-async function uploadToFal(file, label) {
+async function uploadFile(file, label) {
   setStatus('Uploading ' + label + '...');
-  return fal.storage.upload(file);
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch(UPLOAD_URL, { method: 'POST', body: formData });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok || !data.url) {
+    let msg = data.error || ('Failed to upload ' + label);
+    if (res.status === 413) {
+      msg = label + ' is too large. Use a smaller file or shorter audio clip.';
+    } else if (String(msg).includes('FAL')) {
+      msg = 'Add FAL_API_KEY in Vercel Environment Variables, then redeploy.';
+    }
+    throw new Error(msg);
+  }
+
+  return data.url;
 }
 
 form.addEventListener('submit', async (e) => {
@@ -157,16 +159,22 @@ form.addEventListener('submit', async (e) => {
     portrait = await compressImage(portrait);
     audio = await compressAudio(audio);
 
+    if (portrait.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      throw new Error('Portrait image is too large after compression. Try a smaller image.');
+    }
+
     if (audio.size > MAX_UPLOAD_MB * 1024 * 1024) {
       throw new Error(
-        'Audio is still too large (' + formatMb(audio.size) + ' MB). Use a shorter clip under ' + MAX_AUDIO_SECONDS + ' seconds.',
+        'Audio is still too large (' + formatMb(audio.size) + ' MB). Use a clip under ' + MAX_AUDIO_SECONDS + ' seconds.',
       );
     }
 
-    const [imageUrl, audioUrl] = await Promise.all([
-      uploadToFal(portrait, 'portrait'),
-      uploadToFal(audio, 'audio'),
-    ]);
+    const imageUrl = await uploadFile(portrait, 'portrait');
+    const audioUrl = await uploadFile(audio, 'audio');
+
+    if (!imageUrl || !audioUrl) {
+      throw new Error('Upload did not return file URLs. Check FAL_API_KEY on Vercel.');
+    }
 
     setStatus('Generating video... this may take a few minutes');
 
@@ -179,13 +187,7 @@ form.addEventListener('submit', async (e) => {
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok || !data.success || !data.video_url) {
-      let msg = data.error || data.message || 'Avatar generation failed';
-      if (res.status === 413) {
-        msg = 'Upload too large for server. Try a shorter audio clip.';
-      } else if (String(msg).includes('FAL')) {
-        msg = 'Add FAL_API_KEY (or FAL_KEY) in Vercel Environment Variables, then redeploy.';
-      }
-      throw new Error(msg);
+      throw new Error(data.error || data.message || 'Avatar generation failed');
     }
 
     successMsg.innerHTML =

@@ -1,11 +1,11 @@
 {
   "functions": {
-    "api/generate.js": {
-      "maxDuration": 300,
+    "api/upload.js": {
+      "maxDuration": 60,
       "memory": 1024
     },
-    "api/fal/proxy.js": {
-      "maxDuration": 60,
+    "api/generate.js": {
+      "maxDuration": 300,
       "memory": 1024
     }
   }

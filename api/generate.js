@@ -6,6 +6,23 @@ const N8N_WEBHOOK_URL =
   process.env.N8N_WEBHOOK_URL ||
   'https://muhammadumersheraz2000.socioglory.com/webhook/kling/avatar/generate';
 
+async function readJsonBody(req) {
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+    return req.body;
+  }
+
+  const chunks = [];
+  await new Promise((resolve, reject) => {
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', resolve);
+    req.on('error', reject);
+  });
+
+  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  if (!raw) return {};
+  return JSON.parse(raw);
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -20,7 +37,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
+    const body = await readJsonBody(req);
     const imageUrl = body.image_url || body.imageUrl;
     const audioUrl = body.audio_url || body.audioUrl;
     const prompt = String(body.prompt || '.').trim() || '.';
@@ -28,7 +45,8 @@ export default async function handler(req, res) {
     if (!imageUrl || !audioUrl) {
       return res.status(400).json({
         success: false,
-        error: 'image_url and audio_url are required.',
+        error: 'Upload failed before generation. Select image + audio, then try again.',
+        detail: 'image_url and audio_url are required.',
       });
     }
 
