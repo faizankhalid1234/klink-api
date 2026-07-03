@@ -1,0 +1,815 @@
+{
+  "id": "5UEfjpzV1EsaXe4L",
+  "name": "Kling AI Avatar Lip-Sync",
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "ka-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "C:/path/to/portrait.jpg",
+        "options": {}
+      },
+      "id": "ka-2",
+      "name": "Read Portrait Image",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "C:/path/to/speech.mp3",
+        "options": {}
+      },
+      "id": "ka-3",
+      "name": "Read Audio File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\n\nlet image;\nlet audio;\nlet prompt = '.';\nlet source = 'manual';\nlet imageFile = 'portrait';\nlet audioFile = 'audio';\n\nif (item.json?.source === 'webhook') {\n  const binary = item.binary || {};\n  image = binary[item.json.image_key];\n  audio = binary[item.json.audio_key];\n  prompt = item.json.prompt || '.';\n  source = 'webhook';\n  imageFile = item.json.image_file || item.json.image_key;\n  audioFile = item.json.audio_file || item.json.audio_key;\n} else {\n  const imageBinary = $('Read Portrait Image').first().binary || {};\n  const audioBinary = $('Read Audio File').first().binary || {};\n  const imageKey = Object.keys(imageBinary)[0];\n  const audioKey = Object.keys(audioBinary)[0];\n  image = imageBinary[imageKey];\n  audio = audioBinary[audioKey];\n  imageFile = image?.fileName || imageKey || 'portrait';\n  audioFile = audio?.fileName || audioKey || 'audio';\n}\n\nif (!image || !audio) {\n  throw new Error('Missing portrait image or audio file.');\n}\n\nconst imageMime = image.mimeType || 'image/jpeg';\nconst audioMime = audio.mimeType || 'audio/mpeg';\n\nreturn [{\n  json: {\n    image_url: `data:${imageMime};base64,${image.data}`,\n    audio_url: `data:${audioMime};base64,${audio.data}`,\n    prompt,\n    model_id: 'fal-ai/kling-video/ai-avatar/v2/pro',\n    image_file: imageFile,\n    audio_file: audioFile,\n    source,\n  },\n}];"
+      },
+      "id": "ka-4",
+      "name": "Prepare Media URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://queue.fal.run/fal-ai/kling-video/ai-avatar/v2/pro",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Key {{ $env.FAL_API_KEY || $env.FAL_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ image_url: $json.image_url, audio_url: $json.audio_url, prompt: $json.prompt }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "fullResponse": false
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "ka-5",
+      "name": "Create Avatar Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const create = $input.first().json;\nconst prep = $('Prepare Media URLs').first().json;\n\nif (!create.request_id) {\n  return [{\n    json: {\n      success: false,\n      stage: 'create_avatar',\n      error: create.detail || create.message || create.error || 'No request_id returned from Kling Avatar API',\n      source: prep.source || 'manual',\n      raw: create,\n    },\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    request_id: create.request_id,\n    status_url: create.status_url,\n    response_url: create.response_url,\n    cancel_url: create.cancel_url,\n    model_id: prep.model_id,\n    image_file: prep.image_file,\n    audio_file: prep.audio_file,\n    source: prep.source || 'manual',\n    submitted_at: new Date().toISOString(),\n  },\n}];"
+      },
+      "id": "ka-6",
+      "name": "Validate Create Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "created-check",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ka-7",
+      "name": "Job Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 20
+      },
+      "id": "ka-8",
+      "name": "Wait 20 Seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1680,
+        -96
+      ],
+      "webhookId": "kling-avatar-wait-initial"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://queue.fal.run/fal-ai/kling-video/ai-avatar/v2/pro/requests/{{ $('Validate Create Response').first().json.request_id }}/status",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Key {{ $env.FAL_API_KEY || $env.FAL_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "ka-9",
+      "name": "Check Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1920,
+        -96
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "status-complete",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "COMPLETED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ka-10",
+      "name": "Status Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2160,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://queue.fal.run/fal-ai/kling-video/ai-avatar/v2/pro/requests/{{ $('Validate Create Response').first().json.request_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Key {{ $env.FAL_API_KEY || $env.FAL_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "ka-11",
+      "name": "Get Avatar Result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        -208
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst meta = $('Validate Create Response').first().json;\n\nconst videoUrl = result?.video?.url || result?.data?.video?.url;\nconst duration = result?.video?.duration || result?.duration || result?.data?.duration;\n\nif (!videoUrl) {\n  return [{\n    json: {\n      success: false,\n      stage: 'get_result',\n      error: 'Video URL not found in API result',\n      request_id: meta.request_id,\n      source: meta.source || 'manual',\n      raw: result,\n    },\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    request_id: meta.request_id,\n    video_url: videoUrl,\n    duration_seconds: duration,\n    image_file: meta.image_file,\n    audio_file: meta.audio_file,\n    source: meta.source || 'manual',\n    completed_at: new Date().toISOString(),\n    message: 'Kling AI avatar lip-sync video generated successfully.',\n  },\n}];"
+      },
+      "id": "ka-12",
+      "name": "Output Video URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "status-failed",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "FAILED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ka-13",
+      "name": "Status Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2400,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const status = $input.first().json;\nconst meta = $('Validate Create Response').first().json;\nreturn [{\n  json: {\n    success: false,\n    stage: 'poll_status',\n    source: meta.source || 'manual',\n    request_id: meta.request_id,\n    status: status.status,\n    error: status.error || status.detail || 'Avatar generation failed on Kling API',\n    raw: status,\n  },\n}];"
+      },
+      "id": "ka-14",
+      "name": "Build Failed Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const FAL_MODEL = 'fal-ai/kling-video/ai-avatar/v2/pro';\nconst meta = $('Validate Create Response').first().json;\nconst requestId = meta.request_id;\nconst falKey = $env.FAL_API_KEY || $env.FAL_KEY;\n\nif (!falKey) {\n  throw new Error('Missing FAL_API_KEY environment variable on n8n server.');\n}\n\nconst maxAttempts = 36;\nconst delayMs = 15000;\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\n\nfor (let attempt = 1; attempt <= maxAttempts; attempt++) {\n  const statusRes = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://queue.fal.run/${FAL_MODEL}/requests/${requestId}/status`,\n    headers: { Authorization: `Key ${falKey}` },\n    json: true,\n    timeout: 60000,\n  });\n\n  const status = String(statusRes.status || '').toUpperCase();\n\n  if (status === 'COMPLETED') {\n    const result = await this.helpers.httpRequest({\n      method: 'GET',\n      url: `https://queue.fal.run/${FAL_MODEL}/requests/${requestId}`,\n      headers: { Authorization: `Key ${falKey}` },\n      json: true,\n      timeout: 60000,\n    });\n\n    const videoUrl = result?.video?.url || result?.data?.video?.url;\n    if (!videoUrl) {\n      throw new Error('Job completed but video URL was not returned.');\n    }\n\n    return [{\n      json: {\n        success: true,\n        request_id: requestId,\n        video_url: videoUrl,\n        duration_seconds: result?.duration || result?.data?.duration,\n        image_file: meta.image_file,\n        audio_file: meta.audio_file,\n        poll_attempts: attempt,\n        source: meta.source || 'manual',\n        completed_at: new Date().toISOString(),\n        message: 'Kling AI avatar lip-sync video generated successfully.',\n      },\n    }];\n  }\n\n  if (status === 'FAILED') {\n    throw new Error(statusRes.error || statusRes.detail || 'Kling avatar generation failed.');\n  }\n\n  if (attempt < maxAttempts) {\n    await sleep(delayMs);\n  }\n}\n\nthrow new Error(`Timed out after ${maxAttempts} polling attempts (~${Math.round((maxAttempts * delayMs) / 60000)} minutes).`);"
+      },
+      "id": "ka-15",
+      "name": "Poll Until Complete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const err = $input.first().json;\nreturn [{\n  json: {\n    success: false,\n    stage: err.stage || 'create_avatar',\n    source: $('Validate Create Response').first()?.json?.source || $('Parse Webhook Upload').first()?.json?.source || 'manual',\n    error: err.error || err.message || 'Create avatar request failed',\n    raw: err,\n  },\n}];"
+      },
+      "id": "ka-16",
+      "name": "Build Create Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Kling AI Avatar\n\n**Manual:** set file paths in Read nodes\n**Webhook:** POST portrait + audio\n**Env:** `FAL_API_KEY`\n**Page:** `kling-avatar-tool/kling-avatar-upload.html`",
+        "height": 220,
+        "width": 380
+      },
+      "id": "ka-note-1",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kling/avatar/generate",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "ka-wh-1",
+      "name": "Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        240
+      ],
+      "webhookId": "kling-avatar-upload-webhook",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst binary = item.binary || {};\nconst body = item.json.body || item.json;\n\nconst imageKey = ['portrait', 'image', 'photo']\n  .find((k) => binary[k] && String(binary[k].mimeType || '').startsWith('image/'))\n  || Object.keys(binary).find((k) => String(binary[k].mimeType || '').startsWith('image/'));\n\nconst audioKey = ['audio', 'speech', 'voice']\n  .find((k) => binary[k] && String(binary[k].mimeType || '').startsWith('audio/'))\n  || Object.keys(binary).find((k) => String(binary[k].mimeType || '').startsWith('audio/'));\n\nconst errors = [];\nif (!imageKey) errors.push('portrait image file is required (field: portrait)');\nif (!audioKey) errors.push('audio file is required (field: audio)');\n\nif (errors.length) {\n  return [{ json: { valid: false, errors, source: 'webhook' } }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    source: 'webhook',\n    image_key: imageKey,\n    audio_key: audioKey,\n    prompt: String(body.prompt || '.').trim() || '.',\n    image_file: binary[imageKey].fileName || imageKey,\n    audio_file: binary[audioKey].fileName || audioKey,\n  },\n  binary,\n}];"
+      },
+      "id": "ka-wh-2",
+      "name": "Parse Webhook Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "upload-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ka-wh-3",
+      "name": "Valid Upload?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{\n  json: {\n    success: false,\n    stage: 'upload_validation',\n    source: 'webhook',\n    errors: data.errors || ['Invalid upload'],\n    message: 'Please upload portrait image and audio file.',\n  },\n}];"
+      },
+      "id": "ka-wh-4",
+      "name": "Build Upload Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{ json: {\n  success: data.success === true,\n  request_id: data.request_id,\n  video_url: data.video_url,\n  duration_seconds: data.duration_seconds,\n  message: data.message || data.error || 'Request processed',\n  error: data.error,\n  stage: data.stage,\n  source: data.source || 'webhook',\n}}];"
+      },
+      "id": "ka-wh-5",
+      "name": "Format API Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "webhook-check",
+              "leftValue": "={{ $json.source }}",
+              "rightValue": "webhook",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ka-wh-6",
+      "name": "Webhook Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3120,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": "={{ $json.success ? 201 : 400 }}"
+        }
+      },
+      "id": "ka-wh-7",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        3360,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Webhook Upload\n\nPOST multipart/form-data:\n- `portrait` (image)\n- `audio` (audio)\n- `prompt` (optional)\n\nProduction URL:\n`/webhook/kling/avatar/generate`\n\nHTML page:\n`kling-avatar-tool/kling-avatar-upload.html`",
+        "height": 200,
+        "width": 360
+      },
+      "id": "ka-note-2",
+      "name": "Webhook Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Portrait Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Portrait Image": {
+      "main": [
+        [
+          {
+            "node": "Read Audio File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Audio File": {
+      "main": [
+        [
+          {
+            "node": "Prepare Media URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Media URLs": {
+      "main": [
+        [
+          {
+            "node": "Create Avatar Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Avatar Job": {
+      "main": [
+        [
+          {
+            "node": "Validate Create Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Create Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Create Response": {
+      "main": [
+        [
+          {
+            "node": "Job Created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Created?": {
+      "main": [
+        [
+          {
+            "node": "Wait 20 Seconds",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Create Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 20 Seconds": {
+      "main": [
+        [
+          {
+            "node": "Check Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Job Status": {
+      "main": [
+        [
+          {
+            "node": "Status Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Complete?": {
+      "main": [
+        [
+          {
+            "node": "Get Avatar Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Status Failed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Avatar Result": {
+      "main": [
+        [
+          {
+            "node": "Output Video URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Failed?": {
+      "main": [
+        [
+          {
+            "node": "Build Failed Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Poll Until Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Webhook Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Webhook Upload": {
+      "main": [
+        [
+          {
+            "node": "Valid Upload?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Upload?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Media URLs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Upload Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Upload Error": {
+      "main": [
+        [
+          {
+            "node": "Format API Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Video URL": {
+      "main": [
+        [
+          {
+            "node": "Format API Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Until Complete": {
+      "main": [
+        [
+          {
+            "node": "Format API Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Create Error": {
+      "main": [
+        [
+          {
+            "node": "Format API Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Failed Error": {
+      "main": [
+        [
+          {
+            "node": "Format API Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format API Response": {
+      "main": [
+        [
+          {
+            "node": "Webhook Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Request?": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "a718ecad-a1e2-40cb-9ac9-5739555cc02c",
+  "tags": [],
+  "createdAt": "2026-07-03T08:17:42.784Z",
+  "updatedAt": "2026-07-03T09:15:44.651Z"
+}
