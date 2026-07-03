@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kling AI Avatar Generator</title>
+  <meta name="description" content="Upload a portrait and audio to generate a Kling AI lip-sync avatar video.">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, Helvetica, sans-serif;
+      background: radial-gradient(circle at 20% 0%, #1e3a8a33, transparent 40%),
+        radial-gradient(circle at 80% 10%, #7c3aed33, transparent 38%), #060d18;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      width: 100%;
+      max-width: 560px;
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 20px;
+      padding: 32px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    p { color: #94a3b8; line-height: 1.6; }
+    label {
+      display: block;
+      margin: 18px 0 8px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #64748b;
+    }
+    input[type="file"], textarea {
+      width: 100%;
+      background: #111827;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      color: #f8fafc;
+      padding: 12px 14px;
+    }
+    textarea { min-height: 80px; resize: vertical; }
+    button {
+      margin-top: 24px;
+      width: 100%;
+      border: 0;
+      border-radius: 14px;
+      padding: 15px 20px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      cursor: pointer;
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      box-shadow: 0 12px 30px rgba(37, 99, 235, 0.35);
+    }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .msg {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      display: none;
+      line-height: 1.6;
+      font-size: 14px;
+    }
+    .msg.show { display: block; }
+    .success { background: #052e1644; border: 1px solid #16a34a55; color: #86efac; }
+    .error { background: #450a0a44; border: 1px solid #ef444455; color: #fca5a5; }
+    .preview { margin-top: 16px; }
+    video { width: 100%; border-radius: 12px; margin-top: 12px; background: #000; }
+    a { color: #60a5fa; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Kling AI Avatar</h1>
+    <p>Upload a portrait image and audio file to generate a lip-sync avatar video.</p>
+
+    <form id="uploadForm">
+      <label for="portrait">Portrait Image</label>
+      <input id="portrait" name="portrait" type="file" accept="image/*" required>
+
+      <label for="audio">Audio File</label>
+      <input id="audio" name="audio" type="file" accept="audio/*" required>
+
+      <label for="prompt">Prompt (optional)</label>
+      <textarea id="prompt" name="prompt" placeholder="Optional style prompt. Default: .">.</textarea>
+
+      <button id="submitBtn" type="submit">Generate Avatar Video</button>
+    </form>
+
+    <div id="successMsg" class="msg success"></div>
+    <div id="errorMsg" class="msg error"></div>
+    <div id="preview" class="preview"></div>
+  </div>
+
+  <script>
+    const API_URL = 'https://muhammadumersheraz2000.socioglory.com/webhook/kling/avatar/generate';
+    const form = document.getElementById('uploadForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const successMsg = document.getElementById('successMsg');
+    const errorMsg = document.getElementById('errorMsg');
+    const preview = document.getElementById('preview');
+
+    function hideMessages() {
+      successMsg.classList.remove('show');
+      errorMsg.classList.remove('show');
+      preview.innerHTML = '';
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideMessages();
+
+      const portrait = document.getElementById('portrait').files[0];
+      const audio = document.getElementById('audio').files[0];
+      const prompt = document.getElementById('prompt').value || '.';
+
+      if (!portrait || !audio) {
+        errorMsg.textContent = 'Please select both portrait image and audio file.';
+        errorMsg.classList.add('show');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('portrait', portrait);
+      formData.append('audio', audio);
+      formData.append('prompt', prompt);
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Generating... this may take a few minutes';
+
+      try {
+        const res = await fetch(API_URL, { method: 'POST', body: formData });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok || !data.success || !data.video_url) {
+          throw new Error(data.message || data.error || 'Avatar generation failed');
+        }
+
+        successMsg.innerHTML = 'Video generated successfully.<br><a href="' + data.video_url + '" target="_blank" rel="noopener">Download video</a>';
+        successMsg.classList.add('show');
+        preview.innerHTML = '<video controls src="' + data.video_url + '"></video>';
+      } catch (err) {
+        errorMsg.textContent = err.message || 'Something went wrong. Please try again.';
+        errorMsg.classList.add('show');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Generate Avatar Video';
+      }
+    });
+  </script>
+</body>
+</html>
