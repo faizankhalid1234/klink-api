@@ -30,6 +30,7 @@
     }
     h1 { margin: 0 0 8px; font-size: 28px; }
     p { color: #94a3b8; line-height: 1.6; }
+    .hint { font-size: 13px; color: #64748b; margin-top: 4px; }
     label {
       display: block;
       margin: 18px 0 8px;
@@ -82,13 +83,16 @@
   <div class="card">
     <h1>Kling AI Avatar</h1>
     <p>Upload a portrait image and audio file to generate a lip-sync avatar video.</p>
+    <p class="hint">Tip: use a clear face photo and audio between 5–60 seconds. Large images are auto-compressed.</p>
 
     <form id="uploadForm">
       <label for="portrait">Portrait Image</label>
       <input id="portrait" name="portrait" type="file" accept="image/*" required>
+      <p class="hint">JPG or PNG, ideally under 5 MB</p>
 
       <label for="audio">Audio File</label>
       <input id="audio" name="audio" type="file" accept="audio/*" required>
+      <p class="hint">MP3 or WAV, 2–60 seconds recommended</p>
 
       <label for="prompt">Prompt (optional)</label>
       <textarea id="prompt" name="prompt" placeholder="Optional style prompt. Default: .">.</textarea>
@@ -102,7 +106,8 @@
   </div>
 
   <script>
-    const API_URL = 'https://muhammadumersheraz2000.socioglory.com/webhook/kling/avatar/generate';
+    const API_URL = '/api/generate';
+    const MAX_AUDIO_MB = 15;
     const form = document.getElementById('uploadForm');
     const submitBtn = document.getElementById('submitBtn');
     const successMsg = document.getElementById('successMsg');
@@ -115,11 +120,50 @@
       preview.innerHTML = '';
     }
 
+    function formatMb(bytes) {
+      return (bytes / (1024 * 1024)).toFixed(1);
+    }
+
+    async function compressImage(file, maxWidth = 1280, quality = 0.85) {
+      if (!file.type.startsWith('image/')) return file;
+      if (file.size < 800 * 1024) return file;
+
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const img = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = reject;
+        el.src = dataUrl;
+      });
+
+      const scale = Math.min(1, maxWidth / img.width);
+      const width = Math.round(img.width * scale);
+      const height = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+
+      const blob = await new Promise((resolve) => {
+        canvas.toBlob(resolve, 'image/jpeg', quality);
+      });
+
+      if (!blob || blob.size >= file.size) return file;
+      return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' });
+    }
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       hideMessages();
 
-      const portrait = document.getElementById('portrait').files[0];
+      let portrait = document.getElementById('portrait').files[0];
       const audio = document.getElementById('audio').files[0];
       const prompt = document.getElementById('prompt').value || '.';
 
@@ -129,20 +173,36 @@
         return;
       }
 
-      const formData = new FormData();
-      formData.append('portrait', portrait);
-      formData.append('audio', audio);
-      formData.append('prompt', prompt);
+      if (audio.size > MAX_AUDIO_MB * 1024 * 1024) {
+        errorMsg.textContent = 'Audio is too large (' + formatMb(audio.size) + ' MB). Please use a clip under ' + MAX_AUDIO_MB + ' MB or trim the audio.';
+        errorMsg.classList.add('show');
+        return;
+      }
 
       submitBtn.disabled = true;
-      submitBtn.textContent = 'Generating... this may take a few minutes';
+      submitBtn.textContent = 'Preparing upload...';
 
       try {
+        portrait = await compressImage(portrait);
+
+        const formData = new FormData();
+        formData.append('portrait', portrait);
+        formData.append('audio', audio);
+        formData.append('prompt', prompt);
+
+        submitBtn.textContent = 'Generating... this may take a few minutes';
+
         const res = await fetch(API_URL, { method: 'POST', body: formData });
         const data = await res.json().catch(() => ({}));
 
         if (!res.ok || !data.success || !data.video_url) {
-          throw new Error(data.message || data.error || 'Avatar generation failed');
+          let msg = data.error || data.message || 'Avatar generation failed';
+          if (res.status === 413) {
+            msg = 'Files are too large for upload. Try a smaller image or shorter audio clip.';
+          } else if (res.status === 500 && String(msg).includes('FAL_API_KEY')) {
+            msg = 'Server setup incomplete: FAL_API_KEY must be added in Vercel Environment Variables.';
+          }
+          throw new Error(msg);
         }
 
         successMsg.innerHTML = 'Video generated successfully.<br><a href="' + data.video_url + '" target="_blank" rel="noopener">Download video</a>';
