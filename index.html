@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kling AI Avatar</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #060d18;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      width: 100%;
+      max-width: 480px;
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 20px;
+      padding: 32px;
+    }
+    h1 { margin: 0 0 8px; font-size: 26px; }
+    p { color: #94a3b8; line-height: 1.5; }
+    label {
+      display: block;
+      margin: 20px 0 8px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #64748b;
+    }
+    input[type="file"] {
+      width: 100%;
+      background: #111827;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      color: #f8fafc;
+      padding: 12px;
+    }
+    button {
+      margin-top: 24px;
+      width: 100%;
+      border: 0;
+      border-radius: 14px;
+      padding: 15px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      cursor: pointer;
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+    }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .msg {
+      margin-top: 16px;
+      padding: 14px;
+      border-radius: 12px;
+      display: none;
+      line-height: 1.5;
+      font-size: 14px;
+    }
+    .msg.show { display: block; }
+    .success { background: #052e1644; border: 1px solid #16a34a55; color: #86efac; }
+    .error { background: #450a0a44; border: 1px solid #ef444455; color: #fca5a5; }
+    video { width: 100%; border-radius: 12px; margin-top: 12px; background: #000; }
+    a { color: #60a5fa; }
+    .hint { font-size: 13px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Kling AI Avatar</h1>
+    <p>Upload your portrait photo. Audio is fixed for now. Video will appear below when ready.</p>
+
+    <form id="form">
+      <label for="portrait">Your Photo</label>
+      <input id="portrait" type="file" accept="image/*" required>
+      <p class="hint">Clear face photo, JPG or PNG</p>
+      <button id="btn" type="submit">Generate Video</button>
+    </form>
+
+    <div id="ok" class="msg success"></div>
+    <div id="err" class="msg error"></div>
+    <div id="preview"></div>
+  </div>
+
+  <script>
+    const API = 'https://muhammadumersheraz2000.socioglory.com/webhook/kie/avatar/generate';
+    const form = document.getElementById('form');
+    const btn = document.getElementById('btn');
+    const ok = document.getElementById('ok');
+    const err = document.getElementById('err');
+    const preview = document.getElementById('preview');
+
+    async function compressImage(file) {
+      if (file.size < 500 * 1024) return file;
+
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const img = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = reject;
+        el.src = dataUrl;
+      });
+
+      const maxW = 1024;
+      const scale = Math.min(1, maxW / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+      if (!blob) return file;
+      return new File([blob], 'portrait.jpg', { type: 'image/jpeg' });
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      ok.classList.remove('show');
+      err.classList.remove('show');
+      preview.innerHTML = '';
+
+      let portrait = document.getElementById('portrait').files[0];
+      if (!portrait) {
+        err.textContent = 'Please select your photo.';
+        err.classList.add('show');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Generating... wait 1–5 minutes';
+
+      try {
+        portrait = await compressImage(portrait);
+        const formData = new FormData();
+        formData.append('portrait', portrait);
+
+        const res = await fetch(API, { method: 'POST', body: formData });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok || !data.success || !data.video_url) {
+          throw new Error(data.error || data.message || 'Video generation failed');
+        }
+
+        ok.innerHTML = 'Video ready.<br><a href="' + data.video_url + '" target="_blank" rel="noopener">Download video</a>';
+        ok.classList.add('show');
+        preview.innerHTML = '<video controls autoplay src="' + data.video_url + '"></video>';
+      } catch (error) {
+        err.textContent = error.message || 'Something went wrong.';
+        err.classList.add('show');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate Video';
+      }
+    });
+  </script>
+</body>
+</html>
