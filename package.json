@@ -1,8 +1,0 @@
-{
-  "name": "klink-api",
-  "type": "module",
-  "private": true,
-  "dependencies": {
-    "formidable": "^3.5.4"
-  }
-}
