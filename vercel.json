@@ -1,5 +1,14 @@
 {
   "rewrites": [
     { "source": "/", "destination": "/index.html" }
-  ]
+  ],
+  "functions": {
+    "api/avatar/upload.js": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "api/avatar/create.js": {
+      "maxDuration": 60
+    }
+  }
 }

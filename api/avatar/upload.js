@@ -6,16 +6,54 @@ const CORS = {
 
 function pickUrl(resp) {
   if (!resp) return '';
-  if (typeof resp === 'string') return resp;
-  return (
-    resp.data?.url ||
-    resp.data?.fileUrl ||
-    resp.data?.downloadUrl ||
-    resp.url ||
-    resp.fileUrl ||
-    resp.downloadUrl ||
-    ''
-  );
+  if (typeof resp === 'string' && resp.startsWith('http')) return resp.trim();
+  if (typeof resp === 'object') {
+    return (
+      resp.data?.url ||
+      resp.data?.fileUrl ||
+      resp.data?.downloadUrl ||
+      resp.url ||
+      resp.fileUrl ||
+      resp.downloadUrl ||
+      ''
+    );
+  }
+  return '';
+}
+
+async function uploadToCatbox(buffer, filename, mimeType) {
+  const form = new FormData();
+  form.append('reqtype', 'fileupload');
+  form.append('time', '24h');
+  form.append('fileToUpload', new Blob([buffer], { type: mimeType }), filename);
+
+  const res = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
+    method: 'POST',
+    body: form,
+  });
+  const url = String(await res.text()).trim();
+  if (!url.startsWith('http')) throw new Error('Catbox upload failed');
+  return url;
+}
+
+async function uploadToKie(kieKey, buffer, filename, mimeType, uploadPath) {
+  const form = new FormData();
+  form.append('file', new Blob([buffer], { type: mimeType }), filename);
+  form.append('uploadPath', uploadPath);
+  form.append('fileName', filename);
+
+  const kieRes = await fetch('https://kieai.redpandaai.co/api/file-stream-upload', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${kieKey}` },
+    body: form,
+  });
+
+  const data = await kieRes.json().catch(() => ({}));
+  const url = pickUrl(data);
+  if (!kieRes.ok || !url) {
+    throw new Error(data?.msg || data?.message || `Kie upload failed (${kieRes.status})`);
+  }
+  return url;
 }
 
 export default async function handler(req, res) {
@@ -26,15 +64,6 @@ export default async function handler(req, res) {
   }
 
   const kieKey = process.env.KIE_API_KEY;
-  if (!kieKey) {
-    return res.status(500).json({ code: 500, msg: 'KIE_API_KEY not configured on server' });
-  }
-
-  const secret = process.env.KLINK_API_SECRET;
-  if (secret && req.headers['x-api-key'] !== secret) {
-    return res.status(401).json({ code: 401, msg: 'Invalid API key' });
-  }
-
   const body = req.body || {};
   const fileBase64 = body.file_base64 || body.fileBase64;
   const filename = body.filename || body.fileName || 'upload.bin';
@@ -47,28 +76,26 @@ export default async function handler(req, res) {
 
   try {
     const buffer = Buffer.from(fileBase64, 'base64');
-    const form = new FormData();
-    form.append('file', new Blob([buffer], { type: mimeType }), filename);
-    form.append('uploadPath', uploadPath);
-    form.append('fileName', filename);
+    let url = '';
+    let provider = 'kie';
 
-    const kieRes = await fetch('https://kieai.redpandaai.co/api/file-stream-upload', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${kieKey}` },
-      body: form,
-    });
-
-    const data = await kieRes.json();
-    const url = pickUrl(data);
-    if (!kieRes.ok || !url) {
-      return res.status(kieRes.ok ? 502 : kieRes.status).json({
-        code: data?.code || kieRes.status,
-        msg: data?.msg || data?.message || 'Upload failed',
-        data,
-      });
+    if (kieKey) {
+      try {
+        url = await uploadToKie(kieKey, buffer, filename, mimeType, uploadPath);
+      } catch (kieErr) {
+        url = await uploadToCatbox(buffer, filename, mimeType);
+        provider = 'catbox';
+      }
+    } else {
+      url = await uploadToCatbox(buffer, filename, mimeType);
+      provider = 'catbox';
     }
 
-    return res.status(200).json({ code: 200, msg: 'success', data: { url, ...data?.data } });
+    return res.status(200).json({
+      code: 200,
+      msg: 'success',
+      data: { url, provider },
+    });
   } catch (error) {
     return res.status(500).json({ code: 500, msg: error.message || 'Upload failed' });
   }
