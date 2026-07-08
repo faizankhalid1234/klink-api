@@ -7,6 +7,7 @@ InfiniTalk avatar proxy API + upload page.
 | Method | URL | Purpose |
 |--------|-----|---------|
 | POST | `/api/avatar/create` | Create Kie `infinitalk/from-audio` task |
+| POST | `/api/avatar/upload` | Upload portrait/audio file (proxies to Kie) |
 | GET | `/api/avatar/status?taskId=...` | Poll task — returns full Kie response |
 
 ## Vercel env (required)

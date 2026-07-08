@@ -8,7 +8,7 @@ const DEFAULT_PROMPT =
   'Create a realistic AI avatar video.\n\nInput:\n- One front-facing portrait image of a person.\n- One audio file containing speech.\n\nRequirements:\n- Keep the person\'s identity and facial features unchanged.\n- Synchronize lip movements accurately with the audio.\n- Preserve natural eye blinking and subtle facial expressions.\n- Do not alter clothing or background.\n- Export as an MP4 video in the highest available quality.';
 
 const DEFAULT_CALLBACK =
-  'https://muhammadumersheraz2000.socioglory.com/webhook/3bb9a185-a2c8-4c8a-a08f-db53bf5f8c5d';
+  'https://muhammadumersheraz2000.socioglory.com/webhook/kie-ai-callback';
 
 export default async function handler(req, res) {
   Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
