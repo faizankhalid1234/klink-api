@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Kling AI Avatar</title>
+  <title>InfiniTalk Avatar</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -68,15 +68,13 @@
     .msg.show { display: block; }
     .success { background: #052e1644; border: 1px solid #16a34a55; color: #86efac; }
     .error { background: #450a0a44; border: 1px solid #ef444455; color: #fca5a5; }
-    video { width: 100%; border-radius: 12px; margin-top: 12px; background: #000; }
-    a { color: #60a5fa; }
     .hint { font-size: 13px; color: #64748b; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>Kling AI Avatar</h1>
-    <p>Upload your portrait photo. Audio is fixed for now. Video will appear below when ready.</p>
+    <h1>InfiniTalk Avatar</h1>
+    <p>Upload your portrait photo. Audio is fixed. Video link will be sent to your email when ready.</p>
 
     <form id="form">
       <label for="portrait">Your Photo</label>
@@ -87,7 +85,6 @@
 
     <div id="ok" class="msg success"></div>
     <div id="err" class="msg error"></div>
-    <div id="preview"></div>
   </div>
 
   <script>
@@ -96,32 +93,27 @@
     const btn = document.getElementById('btn');
     const ok = document.getElementById('ok');
     const err = document.getElementById('err');
-    const preview = document.getElementById('preview');
 
     async function compressImage(file) {
       if (file.size < 500 * 1024) return file;
-
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result);
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-
       const img = await new Promise((resolve, reject) => {
         const el = new Image();
         el.onload = () => resolve(el);
         el.onerror = reject;
         el.src = dataUrl;
       });
-
       const maxW = 1024;
       const scale = Math.min(1, maxW / img.width);
       const canvas = document.createElement('canvas');
       canvas.width = Math.round(img.width * scale);
       canvas.height = Math.round(img.height * scale);
       canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
       if (!blob) return file;
       return new File([blob], 'portrait.jpg', { type: 'image/jpeg' });
@@ -131,7 +123,6 @@
       e.preventDefault();
       ok.classList.remove('show');
       err.classList.remove('show');
-      preview.innerHTML = '';
 
       let portrait = document.getElementById('portrait').files[0];
       if (!portrait) {
@@ -141,7 +132,7 @@
       }
 
       btn.disabled = true;
-      btn.textContent = 'Generating... wait 1–5 minutes';
+      btn.textContent = 'Submitting...';
 
       try {
         portrait = await compressImage(portrait);
@@ -150,14 +141,15 @@
 
         const res = await fetch(API, { method: 'POST', body: formData });
         const data = await res.json().catch(() => ({}));
+        const taskId = data?.data?.taskId || data?.task_id;
+        const isSuccess = res.ok && (data?.code === 200 || data?.success === true);
 
-        if (!res.ok || !data.success || !data.video_url) {
-          throw new Error(data.error || data.message || 'Video generation failed');
+        if (!isSuccess) {
+          throw new Error(data?.msg || data?.error || data?.message || 'Request failed');
         }
 
-        ok.innerHTML = 'Video ready.<br><a href="' + data.video_url + '" target="_blank" rel="noopener">Download video</a>';
+        ok.innerHTML = 'Video is generating.<br>Task ID: <strong>' + (taskId || '—') + '</strong><br><br>You will receive the video link by email when it is ready.';
         ok.classList.add('show');
-        preview.innerHTML = '<video controls autoplay src="' + data.video_url + '"></video>';
       } catch (error) {
         err.textContent = error.message || 'Something went wrong.';
         err.classList.add('show');
